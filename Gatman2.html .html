@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Gatman: Furias Luminosas</title>
+<style>
+  :root { --ui: #111; --accent:#ffd54d; --danger:#ff4d4d; --ok:#4dff88; }
+  html,body{height:100%;margin:0;background:#0b0f1a;color:#eef;font-family:system-ui,Segoe UI,Roboto,Arial}
+  .wrap{display:flex;flex-direction:column;align-items:center;gap:10px;padding:14px}
+  h1{font-size:clamp(18px,3.5vw,28px);margin:6px 0}
+  canvas{background:#07101f;box-shadow:0 0 0 2px #0c1e3a inset, 0 10px 30px rgba(0,0,0,.45);touch-action:none}
+  .hud{display:flex;gap:14px;flex-wrap:wrap;justify-content:center}
+  .badge{background:#0e1b33;padding:6px 10px;border-radius:8px;border:1px solid #173462}
+  .controls{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+  button{background:#11305f;color:#eef;border:1px solid #2c5aa0;border-radius:8px;padding:8px 12px;cursor:pointer}
+  button:hover{filter:brightness(1.1)}
+  .keys{font-size:12px;opacity:.8}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🐱 Gatman: ¡come furias luminosas!</h1>
+  <div class="hud">
+    <div class="badge">Puntos: <span id="score">0</span></div>
+    <div class="badge">Vidas: <span id="lives">3</span></div>
+    <div class="badge">Nivel: <span id="level">1</span></div>
+    <div class="badge">Estado: <span id="state">Listo</span></div>
+  </div>
+  <canvas id="game" width="672" height="672" aria-label="Juego del gato cazando furias luminosas"></canvas>
+  <div class="controls">
+    <button id="btnStart">▶️ Iniciar / Reiniciar</button>
+    <button id="btnPause">⏸️ Pausa</button>
+    <button id="btnMute">🔈 Sonido</button>
+    <div class="keys">Controles: Flechas o WASD · Móvil: desliza</div>
+  </div>
+</div>
+
+<script>
+/* === Configuración general === */
+const cs = document.getElementById('score');
+const cl = document.getElementById('lives');
+const cv = document.getElementById('level');
+const st = document.getElementById('state');
+const btnStart = document.getElementById('btnStart');
+const btnPause = document.getElementById('btnPause');
+const btnMute  = document.getElementById('btnMute');
+const C = document.getElementById('game');
+const CTX = C.getContext('2d', { alpha:false });
+
+let W = 21, H = 21;           // tamaño del tablero (cuadrícula)
+let TILE = Math.floor(C.width / W);
+let RAF, running=false, paused=false, muted=false;
+
+const SND = {
+  eat: new Audio(), power:new Audio(), hit:new Audio(), win:new Audio(), start:new Audio()
+};
+// pequeños beeps generados con WebAudio (sin archivos)
+function beep(freq=440, dur=0.05, type='sine', vol=0.03){
+  if(muted) return;
+  const ac = new (window.AudioContext||window.webkitAudioContext)();
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type; o.frequency.value=freq;
+  g.gain.value = vol; o.connect(g); g.connect(ac.destination);
+  o.start(); setTimeout(()=>{o.stop(); ac.close()}, dur*1000);
+}
+
+/* === Mapa (0 vacío, 1 pared, 2 f. luminosa, 3 súper furia) ===
+   Diseño compacto: generamos un laberinto simétrico para variar por nivel */
+function makeMap(level=1){
+  const map = Array.from({length:H},()=>Array(W).fill(2));
+  // bordes y algunos bloques
+  for(let y=0;y<H;y++){
+    for(let x=0;x<W;x++){
+      if(x===0||y===0||x===W-1||y===H-1) map[y][x]=1;
+      if((x%2===0 && y%2===0) && Math.random()<0.6) map[y][x]=1;
+    }
+  }
+  // despejar caminos centrales
+  const carve = [[1,1],[1,H-2],[W-2,1],[W-2,H-2],[Math.floor(W/2),Math.floor(H/2)]];
+  carve.forEach(([cx,cy])=>{
+    for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){
+      const x=cx+dx,y=cy+dy; if(map[y]&&map[y][x]!==undefined) map[y][x]=0;
+    }
+  });
+  // colocar súper furias
+  let placed=0;
+  while(placed<4){
+    const x = 2+Math.floor(Math.random()*(W-4));
+    const y = 2+Math.floor(Math.random()*(H-4));
+    if(map[y][x]===2){ map[y][x]=3; placed++; }
+  }
+  // convertir celdas 0 a orbe (2) salvo pasillos principales
+  for(let y=1;y<H-1;y++){
+    for(let x=1;x<W-1;x++){
+      if(map[y][x]===0 && (x%3!==0 || y%3!==0)) map[y][x]=2;
+    }
+  }
+  return map;
+}
+
+/* === Entidades === */
+function spawnCat(map){
+  // busca una celda libre cerca del centro
+  const cx=Math.floor(W/2), cy=Math.floor(H/2);
+  let x=cx,y=cy;
+  while(map[y][x]===1){ x++; if(x>=W-1){x=1;y++;} }
+  return {x,y, px:x, py:y, dir:{x:0,y:0}, next:{x:0,y:0}, speed:0.12, power:0, anim:0};
+}
+function spawnGhosts(map, n=3){
+  const gs=[];
+  let tries=0;
+  while(gs.length<n && tries<500){
+    const x=1+Math.floor(Math.random()*(W-2));
+    const y=1+Math.floor(Math.random()*(H-2));
+    if(map[y][x]!==1 && !(x===cat.x&&y===cat.y)){
+      gs.push({x,y, px:x, py:y, dir:randDir(map,x,y), speed:0.09, scared:0, color:'#ff4d4d'});
+    }
+    tries++;
+  }
+  return gs;
+}
+
+/* === Utilidades de movimiento en grid === */
+function isWalkable(map,x,y){ return map[y] && map[y][x]!==undefined && map[y][x]!==1; }
+function atCenter(e){ return Math.abs(e.px - e.x) < 0.01 && Math.abs(e.py - e.y) < 0.01; }
+function randDir(map,x,y){
+  const dirs = [{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}].filter(d=>isWalkable(map,x+d.x,y+d.y));
+  return dirs.length? dirs[Math.floor(Math.random()*dirs.length)] : {x:0,y:0};
+}
+
+let level=1, map, cat, ghosts, score=0, lives=3;
+
+/* === Entrada teclado / táctil === */
+const keys = {};
+addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  if(['arrowup','w'].includes(k)) cat.next={x:0,y:-1};
+  if(['arrowdown','s'].includes(k)) cat.next={x:0,y:1};
+  if(['arrowleft','a'].includes(k)) cat.next={x:-1,y:0};
+  if(['arrowright','d'].includes(k)) cat.next={x:1,y:0};
+  if(k==='p') togglePause();
+});
+let touchStart=null;
+C.addEventListener('pointerdown',e=>{touchStart={x:e.clientX,y:e.clientY};});
+C.addEventListener('pointerup',e=>{
+  if(!touchStart) return;
+  const dx=e.clientX-touchStart.x, dy=e.clientY-touchStart.y;
+  if(Math.abs(dx)>Math.abs(dy)){
+    cat.next = {x: dx>0?1:-1, y:0};
+  }else{
+    cat.next = {x:0, y: dy>0?1:-1};
+  }
+  touchStart=null;
+});
+
+/* === Botones === */
+btnStart.onclick=()=>startGame(true);
+btnPause.onclick=()=>togglePause();
+btnMute.onclick=()=>{ muted=!muted; btnMute.textContent = muted?'🔇 Silencio':'🔈 Sonido'; };
+
+/* === Escalado responsivo === */
+function fitCanvas(){
+  const size = Math.min(window.innerWidth-28, window.innerHeight-210, 720);
+  const px = Math.max(320, size);
+  C.style.width = px+'px'; C.style.height = px+'px';
+}
+addEventListener('resize', fitCanvas); fitCanvas();
+
+/* === Lógica principal === */
+function startGame(resetAll=false){
+  if(resetAll){
+    level=1; score=0; lives=3;
+  }
+  map = makeMap(level);
+  cat = spawnCat(map);
+  ghosts = spawnGhosts(map, Math.min(3+Math.floor(level/2), 6));
+  cs.textContent=score; cl.textContent=lives; cv.textContent=level;
+  st.textContent='¡Corre!';
+  paused=false; running=true;
+  cancelAnimationFrame(RAF);
+  loop();
+  beep(660,0.08,'triangle',0.05);
+}
+function togglePause(){
+  if(!running) return;
+  paused=!paused;
+  st.textContent = paused? 'Pausa' : '¡Corre!';
+  if(!paused) loop();
+}
+
+function update(dt){
+  // dirección deseada -> aplica si se puede
+  const nx = cat.x + cat.next.x, ny = cat.y + cat.next.y;
+  if(isWalkable(map,nx,ny) && atCenter(cat)){ cat.dir = {...cat.next}; }
+
+  // mover gato
+  cat.px += cat.dir.x * cat.speed * dt;
+  cat.py += cat.dir.y * cat.speed * dt;
+  // ajustar a celdas
+  if(Math.abs(cat.px - cat.x) >= 1){ cat.x += Math.sign(cat.px-cat.x); }
+  if(Math.abs(cat.py - cat.y) >= 1){ cat.y += Math.sign(cat.py-cat.y); }
+
+  // comer furias
+  const cell = map[cat.y]?.[cat.x];
+  if(cell===2){ map[cat.y][cat.x]=0; score+=10; cs.textContent=score; beep(880,0.03,'square',0.04); }
+  if(cell===3){ map[cat.y][cat.x]=0; score+=50; cs.textContent=score; cat.power=6000; ghosts.forEach(g=>g.scared=6000); beep(220,0.12,'sawtooth',0.06); }
+
+  // reducir temporizadores
+  if(cat.power>0) cat.power = Math.max(0, cat.power - dt);
+  ghosts.forEach(g=>{ if(g.scared>0) g.scared = Math.max(0, g.scared - dt); });
+
+  // mover fantasmas (sombras)
+  ghosts.forEach(g=>{
+    // en centros de celda, escoger dirección válida (evitar retroceso salvo sin salida)
+    if(atCenter(g)){
+      const opts = [{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}].filter(d=>isWalkable(map,g.x+d.x,g.y+d.y));
+      const noBack = opts.filter(d=>!(d.x===-g.dir.x && d.y===-g.dir.y));
+      const choices = (noBack.length?noBack:opts);
+      // si asustado, tender a alejarse del gato
+      if(g.scared>0){
+        choices.sort((a,b)=>{
+          const da = Math.hypot((g.x+a.x)-cat.x,(g.y+a.y)-cat.y);
+          const db = Math.hypot((g.x+b.x)-cat.x,(g.y+b.y)-cat.y);
+          return db - da;
+        });
+      }else{
+        // a veces acercarse
+        if(Math.random()<0.5){
+          choices.sort((a,b)=>{
+            const da = Math.hypot((g.x+a.x)-cat.x,(g.y+a.y)-cat.y);
+            const db = Math.hypot((g.x+b.x)-cat.x,(g.y+b.y)-cat.y);
+            return da - db;
+          });
+        }
+      }
+      g.dir = choices[0]||{x:0,y:0};
+    }
+    g.px += g.dir.x * g.speed * dt;
+    g.py += g.dir.y * g.speed * dt;
+    if(Math.abs(g.px - g.x) >= 1){ g.x += Math.sign(g.px-g.x); }
+    if(Math.abs(g.py - g.y) >= 1){ g.y += Math.sign(g.py-g.y); }
+  });
+
+  // colisiones gato-fantasma
+  for(const g of ghosts){
+    if(Math.hypot(g.px-cat.px, g.py-cat.py) < 0.4){
+      if(g.scared>0){
+        // comer fantasma
+        score+=200; cs.textContent=score; g.scared=0;
+        // respawn fantasma en un borde
+        let rx = Math.random()<0.5?1:W-2, ry=1+Math.floor(Math.random()*(H-2));
+        while(!isWalkable(map,rx,ry)) { ry = 1+Math.floor(Math.random()*(H-2)); }
+        g.x=g.px=rx; g.y=g.py=ry; g.dir=randDir(map,rx,ry);
+        beep(150,0.07,'square',0.05);
+      }else{
+        // daño al gato
+        lives--; cl.textContent=lives; st.textContent='¡Ay! 😿';
+        beep(140,0.25,'triangle',0.08);
+        // reset posiciones
+        cat = spawnCat(map);
+        ghosts = spawnGhosts(map, ghosts.length);
+        if(lives<=0){ gameOver(); }
+      }
+      break;
+    }
+  }
+
+  // ¿ganó?
+  let remaining=0;
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++) if(map[y][x]===2||map[y][x]===3) remaining++;
+  if(remaining===0){ level++; cv.textContent=level; st.textContent='¡Nivel superado!'; beep(990,0.10,'square',0.07); map=makeMap(level); cat=spawnCat(map); ghosts=spawnGhosts(map, Math.min(3+Math.floor(level/2),6)); }
+}
+
+function gameOver(){
+  running=false;
+  st.textContent='Juego terminado';
+  cancelAnimationFrame(RAF);
+}
+
+function draw(){
+  // fondo cuadriculado suave
+  CTX.fillStyle = '#051026'; CTX.fillRect(0,0,C.width,C.height);
+  // dibujar mapa
+  for(let y=0;y<H;y++){
+    for(let x=0;x<W;x++){
+      const t = map[y][x];
+      const px = x*TILE, py = y*TILE;
+      if(t===1){
+        // pared
+        CTX.fillStyle = '#0d2a52';
+        CTX.fillRect(px,py,TILE,TILE);
+        CTX.strokeStyle='#153e78';
+        CTX.lineWidth=2;
+        CTX.strokeRect(px+1,py+1,TILE-2,TILE-2);
+      }else if(t===2){
+        // furia luminosa pequeña
+        CTX.beginPath();
+        CTX.fillStyle = '#ffd54d';
+        CTX.arc(px+TILE/2, py+TILE/2, TILE*0.10, 0, Math.PI*2);
+        CTX.fill();
+        glow(px+TILE/2, py+TILE/2, TILE*0.6, '#ffd54d22');
+      }else if(t===3){
+        // súper furia
+        CTX.beginPath();
+        CTX.fillStyle = '#9cfffa';
+        CTX.arc(px+TILE/2, py+TILE/2, TILE*0.18, 0, Math.PI*2);
+        CTX.fill();
+        glow(px+TILE/2, py+TILE/2, TILE*0.9, '#9cfffa2a');
+      }
+    }
+  }
+
+  // dibujar gato (cuerpo + orejas + “boca” estilo Pac)
+  const gx = cat.px*TILE + TILE/2;
+  const gy = cat.py*TILE + TILE/2;
+  const r  = TILE*0.42;
+  CTX.save();
+  const ang = Math.atan2(cat.dir.y, cat.dir.x);
+  CTX.translate(gx,gy);
+  if(cat.dir.x!==0 || cat.dir.y!==0) CTX.rotate(ang);
+  // cuerpo
+  CTX.fillStyle = cat.power>0 ? '#4dff88' : '#ffd54d';
+  CTX.beginPath();
+  const open = 0.3 + 0.2*Math.sin(Date.now()/100);
+  CTX.moveTo(0,0);
+  CTX.arc(0,0, r, open, -open, false);
+  CTX.closePath();
+  CTX.fill();
+  // orejas
+  CTX.fillStyle = '#ffe38a';
+  CTX.beginPath(); CTX.moveTo(-r*0.2,-r*0.9); CTX.lineTo(0,-r*0.5); CTX.lineTo(r*0.2,-r*0.9); CTX.closePath(); CTX.fill();
+  CTX.restore();
+
+  // dibujar fantasmas
+  ghosts.forEach(g=>{
+    const x = g.px*TILE + TILE/2, y = g.py*TILE + TILE/2, rr=TILE*0.42;
+    CTX.save();
+    CTX.translate(x,y);
+    CTX.fillStyle = g.scared>0 ? '#3ec7ff' : g.color;
+    CTX.beginPath();
+    CTX.arc(0, -rr*0.2, rr, Math.PI, 0, false);
+    CTX.lineTo(rr, rr*0.7);
+    for(let i=3;i>=-3;i--){
+      CTX.lineTo((i*rr/3), rr*(0.7 + (i%2?0.1:-0.1)));
+    }
+    CTX.closePath(); CTX.fill();
+    // ojos
+    CTX.fillStyle = '#fff';
+    CTX.beginPath(); CTX.arc(-rr*0.3, -rr*0.2, rr*0.18, 0, Math.PI*2); CTX.arc(rr*0.3, -rr*0.2, rr*0.18, 0, Math.PI*2); CTX.fill();
+    CTX.fillStyle = '#222';
+    CTX.beginPath(); CTX.arc(-rr*0.3 + g.dir.x*3, -rr*0.2 + g.dir.y*3, rr*0.08, 0, Math.PI*2); CTX.arc(rr*0.3 + g.dir.x*3, -rr*0.2 + g.dir.y*3, rr*0.08, 0, Math.PI*2); CTX.fill();
+    CTX.restore();
+    if(g.scared>0) glow(x,y, rr*1.8, '#3ec7ff22');
+  });
+}
+
+function glow(x,y,r,color){
+  const grd = CTX.createRadialGradient(x,y,0, x,y,r);
+  grd.addColorStop(0,color); grd.addColorStop(1,'#0000');
+  CTX.fillStyle = grd;
+  CTX.beginPath(); CTX.arc(x,y,r,0,Math.PI*2); CTX.fill();
+}
+
+let last=0;
+function loop(ts=0){
+  if(!running || paused){ return; }
+  RAF = requestAnimationFrame(loop);
+  const dt = Math.min(32, ts - last || 16) * 0.06 * 16.6667; // normalizar
+  last = ts;
+  update(dt);
+  draw();
+}
+startGame(true);
+</script>
+</body>
+</html>
