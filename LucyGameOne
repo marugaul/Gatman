@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lucy's Community Helpers Game</title>
+    <script src="https://unpkg.com/react@17/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-20px); }
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .animate-bounce {
+            animation: bounce 2s infinite;
+        }
+        .animate-pulse {
+            animation: pulse 2s infinite;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+        function App() {
+          const [gameMode, setGameMode] = React.useState('menu');
+          const [currentCard, setCurrentCard] = React.useState(0);
+          const [score, setScore] = React.useState(0);
+          const [showFeedback, setShowFeedback] = React.useState(null);
+          const [isListening, setIsListening] = React.useState(false);
+          const [musicEnabled, setMusicEnabled] = React.useState(true);
+          const [quizOptions, setQuizOptions] = React.useState([]);
+          const [selectedAnswer, setSelectedAnswer] = React.useState(null);
+
+          const communityHelpers = [
+            { name: 'Doctor', emoji: '👨‍⚕️', color: '#FF6B9D', description: 'Helps sick people feel better' },
+            { name: 'Firefighter', emoji: '🚒', color: '#FF4757', description: 'Puts out fires and saves people' },
+            { name: 'Police Officer', emoji: '👮', color: '#3742FA', description: 'Keeps us safe and follows the law' },
+            { name: 'Teacher', emoji: '👩‍🏫', color: '#FFA502', description: 'Teaches children at school' },
+            { name: 'Secretary', emoji: '💼', color: '#2ED573', description: 'Helps organize the office' },
+            { name: 'Principal', emoji: '👔', color: '#5F27CD', description: 'Leads the school' },
+            { name: 'Janitor', emoji: '🧹', color: '#00D2D3', description: 'Keeps buildings clean' },
+            { name: 'Gym Teacher', emoji: '⚽', color: '#FF6348', description: 'Teaches sports and exercise' },
+            { name: 'Engineer', emoji: '👷', color: '#FFD700', description: 'Builds and designs things' },
+            { name: 'Gatekeeper', emoji: '🚪', color: '#747D8C', description: 'Guards the entrance' },
+            { name: 'Music Teacher', emoji: '🎵', color: '#FF6B81', description: 'Teaches music and songs' },
+            { name: 'Cashier', emoji: '💰', color: '#26DE81', description: 'Helps us pay for things' },
+            { name: 'Trash Collector', emoji: '🗑️', color: '#A55EEA', description: 'Collects our garbage' },
+            { name: 'Gardener', emoji: '🌻', color: '#20BF6B', description: 'Takes care of plants' },
+            { name: 'Mail Carrier', emoji: '📬', color: '#4B7BEC', description: 'Delivers our mail' },
+            { name: 'Nurse', emoji: '👩‍⚕️', color: '#FC5C65', description: 'Helps doctors care for patients' },
+            { name: 'Chef', emoji: '👨‍🍳', color: '#FD79A8', description: 'Cooks delicious food' },
+            { name: 'Veterinarian', emoji: '🐕', color: '#6C5CE7', description: 'Takes care of animals' },
+            { name: 'Taxi Driver', emoji: '🚕', color: '#FDB924', description: 'Drives people to places' }
+          ];
+
+          const synth = window.speechSynthesis;
+
+          const speakText = (text) => {
+            if (synth.speaking) synth.cancel();
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'en-US';
+            utterance.rate = 0.8;
+            utterance.pitch = 1.2;
+            synth.speak(utterance);
+          };
+
+          const startVoiceRecognition = () => {
+            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+              alert('Voice recognition is not supported in your browser. Try Chrome!');
+              return;
+            }
+
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            const recognition = new SpeechRecognition();
+            recognition.lang = 'en-US';
+            recognition.continuous = false;
+
+            setIsListening(true);
+
+            recognition.onresult = (event) => {
+              const transcript = event.results[0][0].transcript.toLowerCase();
+              const currentHelper = communityHelpers[currentCard].name.toLowerCase();
+              
+              if (transcript.includes(currentHelper.split(' ')[0])) {
+                setShowFeedback('happy');
+                setScore(score + 10);
+                speakText('Great job! That is correct!');
+              } else {
+                setShowFeedback('sad');
+                speakText('Try again! Listen carefully.');
+              }
+              
+              setIsListening(false);
+              setTimeout(() => setShowFeedback(null), 2000);
+            };
+
+            recognition.onerror = () => {
+              setIsListening(false);
+              setShowFeedback('sad');
+              setTimeout(() => setShowFeedback(null), 2000);
+            };
+
+            recognition.start();
+          };
+
+          const generateQuizOptions = () => {
+            const correct = communityHelpers[currentCard];
+            const others = communityHelpers.filter((_, i) => i !== currentCard);
+            const shuffled = others.sort(() => 0.5 - Math.random()).slice(0, 3);
+            const options = [...shuffled, correct].sort(() => 0.5 - Math.random());
+            setQuizOptions(options);
+          };
+
+          const handleQuizAnswer = (helper) => {
+            setSelectedAnswer(helper.name);
+            if (helper.name === communityHelpers[currentCard].name) {
+              setShowFeedback('happy');
+              setScore(score + 10);
+              speakText('Excellent! That is correct!');
+            } else {
+              setShowFeedback('sad');
+              speakText('Oops! Try again!');
+            }
+            
+            setTimeout(() => {
+              setShowFeedback(null);
+              setSelectedAnswer(null);
+              if (currentCard < communityHelpers.length - 1) {
+                setCurrentCard(currentCard + 1);
+              } else {
+                setGameMode('menu');
+                setCurrentCard(0);
+              }
+            }, 2500);
+          };
+
+          const startGame = (mode) => {
+            setGameMode(mode);
+            setCurrentCard(0);
+            setScore(0);
+            if (mode === 'quiz') {
+              generateQuizOptions();
+            }
+          };
+
+          React.useEffect(() => {
+            if (gameMode === 'quiz') {
+              generateQuizOptions();
+            }
+          }, [currentCard, gameMode]);
+
+          const nextCard = () => {
+            if (currentCard < communityHelpers.length - 1) {
+              setCurrentCard(currentCard + 1);
+            } else {
+              setCurrentCard(0);
+            }
+          };
+
+          const prevCard = () => {
+            if (currentCard > 0) {
+              setCurrentCard(currentCard - 1);
+            } else {
+              setCurrentCard(communityHelpers.length - 1);
+            }
+          };
+
+          const helper = communityHelpers[currentCard];
+
+          return (
+            <div className="min-h-screen bg-gradient-to-br from-purple-400 via-pink-300 to-blue-300 p-4 relative overflow-hidden">
+              {/* Animated Background Elements */}
+              <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                <div className="absolute top-10 left-10 text-6xl animate-bounce">⭐</div>
+                <div className="absolute top-20 right-20 text-5xl animate-pulse">🌈</div>
+                <div className="absolute bottom-20 left-20 text-6xl animate-bounce" style={{animationDelay: '0.5s'}}>✨</div>
+                <div className="absolute bottom-10 right-10 text-5xl animate-pulse" style={{animationDelay: '1s'}}>🎈</div>
+              </div>
+
+              {/* Music Toggle */}
+              <button
+                onClick={() => setMusicEnabled(!musicEnabled)}
+                className="absolute top-4 right-4 bg-white rounded-full p-3 shadow-lg hover:scale-110 transition-transform z-10"
+              >
+                <span className="text-2xl">{musicEnabled ? '🔊' : '🔇'}</span>
+              </button>
+
+              {/* Score Display */}
+              {gameMode !== 'menu' && (
+                <div className="absolute top-4 left-4 bg-white rounded-full px-6 py-3 shadow-lg z-10">
+                  <span className="text-2xl font-bold text-purple-600">⭐ {score}</span>
+                </div>
+              )}
+
+              {/* Main Menu */}
+              {gameMode === 'menu' && (
+                <div className="flex flex-col items-center justify-center min-h-screen">
+                  <h1 className="text-6xl font-bold text-white mb-4 drop-shadow-lg animate-bounce">
+                    🎮 Lucy's Community Helpers 🎮
+                  </h1>
+                  <p className="text-2xl text-white mb-12 drop-shadow">Learn about people who help us!</p>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl">
+                    <button
+                      onClick={() => startGame('learn')}
+                      className="bg-gradient-to-r from-pink-400 to-purple-500 text-white text-3xl font-bold py-12 px-8 rounded-3xl shadow-2xl hover:scale-105 transition-transform"
+                    >
+                      📚 Learn Mode
+                      <p className="text-lg mt-2">Listen and practice!</p>
+                    </button>
+                    
+                    <button
+                      onClick={() => startGame('quiz')}
+                      className="bg-gradient-to-r from-blue-400 to-green-500 text-white text-3xl font-bold py-12 px-8 rounded-3xl shadow-2xl hover:scale-105 transition-transform"
+                    >
+                      🎯 Quiz Mode
+                      <p className="text-lg mt-2">Test your knowledge!</p>
+                    </button>
+                    
+                    <button
+                      onClick={() => startGame('voice')}
+                      className="bg-gradient-to-r from-yellow-400 to-orange-500 text-white text-3xl font-bold py-12 px-8 rounded-3xl shadow-2xl hover:scale-105 transition-transform"
+                    >
+                      🎤 Voice Practice
+                      <p className="text-lg mt-2">Say it out loud!</p>
+                    </button>
+                    
+                    <button
+                      onClick={() => startGame('flashcards')}
+                      className="bg-gradient-to-r from-red-400 to-pink-500 text-white text-3xl font-bold py-12 px-8 rounded-3xl shadow-2xl hover:scale-105 transition-transform"
+                    >
+                      🃏 Flashcards
+                      <p className="text-lg mt-2">Quick review!</p>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Learn Mode */}
+              {gameMode === 'learn' && (
+                <div className="flex flex-col items-center justify-center min-h-screen">
+                  <button
+                    onClick={() => setGameMode('menu')}
+                    className="absolute top-20 left-4 bg-white rounded-full px-6 py-3 shadow-lg hover:scale-110 transition-transform"
+                  >
+                    <span className="text-2xl">🏠 Home</span>
+                  </button>
+
+                  <div className="bg-white rounded-3xl shadow-2xl p-12 max-w-2xl relative">
+                    <div className="text-center">
+                      <div 
+                        className="text-9xl mb-6 cursor-pointer hover:scale-110 transition-transform"
+                        onClick={() => speakText(helper.name)}
+                      >
+                        {helper.emoji}
+                      </div>
+                      
+                      <h2 className="text-5xl font-bold mb-4" style={{color: helper.color}}>
+                        {helper.name}
+                      </h2>
+                      
+                      <p className="text-2xl text-gray-600 mb-8">{helper.description}</p>
+                      
+                      <button
+                        onClick={() => speakText(helper.name)}
+                        className="bg-gradient-to-r from-blue-400 to-blue-600 text-white text-2xl font-bold py-4 px-8 rounded-full shadow-lg hover:scale-105 transition-transform mb-4"
+                      >
+                        🔊 Listen
+                      </button>
+                      
+                      <div className="text-xl text-gray-500 mt-4">
+                        Card {currentCard + 1} of {communityHelpers.length}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-6 mt-8">
+                    <button
+                      onClick={prevCard}
+                      className="bg-white text-4xl p-6 rounded-full shadow-lg hover:scale-110 transition-transform"
+                    >
+                      ⬅️
+                    </button>
+                    <button
+                      onClick={nextCard}
+                      className="bg-white text-4xl p-6 rounded-full shadow-lg hover:scale-110 transition-transform"
+                    >
+                      ➡️
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Voice Practice Mode */}
+              {gameMode === 'voice' && (
+                <div className="flex flex-col items-center justify-center min-h-screen">
+                  <button
+                    onClick={() => setGameMode('menu')}
+                    className="absolute top-20 left-4 bg-white rounded-full px-6 py-3 shadow-lg hover:scale-110 transition-transform"
+                  >
+                    <span className="text-2xl">🏠 Home</span>
+                  </button>
+
+                  <div className="bg-white rounded-3xl shadow-2xl p-12 max-w-2xl relative">
+                    <div className="text-center">
+                      <div className="text-9xl mb-6">{helper.emoji}</div>
+                      
+                      <h2 className="text-5xl font-bold mb-4" style={{color: helper.color}}>
+                        Say: "{helper.name}"
+                      </h2>
+                      
+                      <p className="text-2xl text-gray-600 mb-8">{helper.description}</p>
+                      
+                      <div className="flex gap-4 justify-center mb-6">
+                        <button
+                          onClick={() => speakText(helper.name)}
+                          className="bg-gradient-to-r from-blue-400 to-blue-600 text-white text-2xl font-bold py-4 px-8 rounded-full shadow-lg hover:scale-105 transition-transform"
+                        >
+                          🔊 Listen
+                        </button>
+                        
+                        <button
+                          onClick={startVoiceRecognition}
+                          disabled={isListening}
+                          className={`${isListening ? 'bg-red-500 animate-pulse' : 'bg-gradient-to-r from-green-400 to-green-600'} text-white text-2xl font-bold py-4 px-8 rounded-full shadow-lg hover:scale-105 transition-transform`}
+                        >
+                          {isListening ? '🎤 Listening...' : '🎤 Record'}
+                        </button>
+                      </div>
+                      
+                      <div className="text-xl text-gray-500">
+                        Card {currentCard + 1} of {communityHelpers.length}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-6 mt-8">
+                    <button
+                      onClick={prevCard}
+                      className="bg-white text-4xl p-6 rounded-full shadow-lg hover:scale-110 transition-transform"
+                    >
+                      ⬅️
+                    </button>
+                    <button
+                      onClick={nextCard}
+                      className="bg-white text-4xl p-6 rounded-full shadow-lg hover:scale-110 transition-transform"
+                    >
+                      ➡️
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Quiz Mode */}
+              {gameMode === 'quiz' && (
+                <div className="flex flex-col items-center justify-center min-h-screen">
+                  <button
+                    onClick={() => setGameMode('menu')}
+                    className="absolute top-20 left-4 bg-white rounded-full px-6 py-3 shadow-lg hover:scale-110 transition-transform"
+                  >
+                    <span className="text-2xl">🏠 Home</span>
+                  </button>
+
+                  <div className="bg-white rounded-3xl shadow-2xl p-12 max-w-3xl">
+                    <h2 className="text-4xl font-bold text-center mb-8 text-purple-600">
+                      Who is this? 🤔
+                    </h2>
+                    
+                    <div className="text-9xl text-center mb-8">{helper.emoji}</div>
+                    
+                    <p className="text-2xl text-center text-gray-600 mb-8">{helper.description}</p>
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                      {quizOptions.map((option, index) => (
+                        <button
+                          key={index}
+                          onClick={() => handleQuizAnswer(option)}
+                          disabled={selectedAnswer !== null}
+                          className={`${
+                            selectedAnswer === option.name
+                              ? option.name === helper.name
+                                ? 'bg-green-400'
+                                : 'bg-red-400'
+                              : 'bg-gradient-to-r from-purple-400 to-pink-400'
+                          } text-white text-2xl font-bold py-6 px-4 rounded-2xl shadow-lg hover:scale-105 transition-transform disabled:opacity-50`}
+                        >
+                          {option.emoji} {option.name}
+                        </button>
+                      ))}
+                    </div>
+                    
+                    <div className="text-xl text-center text-gray-500 mt-6">
+                      Question {currentCard + 1} of {communityHelpers.length}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Flashcards Mode */}
+              {gameMode === 'flashcards' && (
+                <div className="flex flex-col items-center justify-center min-h-screen">
+                  <button
+                    onClick={() => setGameMode('menu')}
+                    className="absolute top-20 left-4 bg-white rounded-full px-6 py-3 shadow-lg hover:scale-110 transition-transform"
+                  >
+                    <span className="text-2xl">🏠 Home</span>
+                  </button>
+
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 max-w-6xl">
+                    {communityHelpers.map((h, index) => (
+                      <div
+                        key={index}
+                        onClick={() => speakText(h.name)}
+                        className="bg-white rounded-2xl shadow-xl p-6 cursor-pointer hover:scale-105 transition-transform"
+                        style={{borderTop: `6px solid ${h.color}`}}
+                      >
+                        <div className="text-6xl text-center mb-3">{h.emoji}</div>
+                        <h3 className="text-xl font-bold text-center" style={{color: h.color}}>
+                          {h.name}
+                        </h3>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Feedback Overlay */}
+              {showFeedback && (
+                <div className="fixed inset-0 flex items-center justify-center z-50 pointer-events-none">
+                  <div className="text-9xl animate-bounce">
+                    {showFeedback === 'happy' ? '😊' : '😢'}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
